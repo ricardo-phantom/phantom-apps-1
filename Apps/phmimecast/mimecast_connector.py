@@ -62,8 +62,8 @@ class MimecastConnector(BaseConnector):
         action_result.add_data(response)
         return action_result.set_status(phantom.APP_SUCCESS, "Successfully set accessKey and secretKey")
 
-    def _get_request_headers(self, uri, action_result, expired=False):
-        if self._access_key is None or self._secret_key is None:
+    def _get_request_headers(self, uri, action_result, reset_flag=False, expired=False):
+        if self._access_key is None or self._secret_key is None or reset_flag is True:
             self._login(action_result)
             if action_result.get_status() is False:
                 self.save_progress("Failed login with given credentials")
@@ -125,8 +125,7 @@ class MimecastConnector(BaseConnector):
         message = u"Error from server. Message from server: {0} ".format(resp_json['fail'][0]['errors'][0]['message'])
 
         if "AccessKey Has Expired" in resp_json['fail'][0]['errors'][0]['message']:
-            message += "Resetting AccessKey and SecretKey... Please try again."
-            self._login(action_result)
+            message += "Resetting AccessKey and SecretKey..."
 
         return RetVal(action_result.set_status(phantom.APP_ERROR, message), None)
 
@@ -186,7 +185,24 @@ class MimecastConnector(BaseConnector):
         except Exception as e:
             return RetVal(action_result.set_status(phantom.APP_ERROR, u"Error Connecting to server. Details: {0}".format(str(e))), resp_json)
 
-        return self._process_response(r, action_result)
+        ret_val_obj = self._process_response(r, action_result)
+        resp_message = action_result.get_message()
+
+        # If AccessKey/Secret Key have been reset after expiration, send the rest call again
+        if "Resetting" in resp_message:
+            headers = self._get_request_headers(url, action_result, reset_flag=True)
+            try:
+                r = request_func(
+                                url,
+                                headers=headers,
+                                json=data,
+                                verify=config.get('verify_server_cert', False),
+                                params=params)
+            except Exception as e:
+                return RetVal(action_result.set_status(phantom.APP_ERROR, u"Error Connecting to server. Details: {0}".format(str(e))), resp_json)
+            return self._process_response(r, action_result)
+        else:
+            return ret_val_obj
 
     def _handle_test_connectivity(self, param):
 
